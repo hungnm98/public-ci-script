@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# Export AWS credentials
+export AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+export AWS_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+
+# Get input arguments
+input_folder=$1
+cache_key=$2
+file_name=$3
+
+md5_cache_key=$(echo -n $cache_key | md5sum | awk '{print $1}')
+tar_file="${md5_cache_key}.tgz"
+
+if [ "$file_name" != "" ]; then
+ tar_file="${file_name}.tgz"
+fi
+
+echo "Input folder: $input_folder"
+echo "Cache key: $cache_key"
+echo "tar file: $tar_file"
+
+
+S3_FOLDER="$S3_BUCKET/cache_folders/$cache_key/$tar_file"
+LOCAL_FILE="/tmp/save-cache/$tar_file"
+mkdir -p /tmp/save-cache
+echo "S3_TMP_DIR: $S3_TMP_DIR"
+if [ "$S3_TMP_DIR" != "" ]; then
+  mkdir -p $S3_TMP_DIR/save-cache
+  LOCAL_FILE="$S3_TMP_DIR/save-cache/$tar_file"
+fi
+
+echo "s3 file: $S3_FOLDER"
+echo "local file: $LOCAL_FILE"
+
+rm $LOCAL_FILE
+# cd $input_folder && zip -r $LOCAL_FILE * && cd -
+
+if aws s3 ls "${S3_FOLDER}" > /dev/null 2>&1; then
+  echo "File exists!"
+else
+  start_at=$(date)
+  tar -zcf $LOCAL_FILE -C $input_folder .
+  echo "done $start_at => $(date)"
+  echo "put to s3"
+  aws s3 cp $LOCAL_FILE s3://$S3_FOLDER
+fi
