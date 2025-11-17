@@ -25,7 +25,7 @@ file_name=$3
 ###
 # Expire setting (default)
 ###
-EXPIRE_HOURS=72
+EXPIRE_HOURS="${SAVE_CACHE_EXPIRE_HOURS:-72}"
 EXPIRE_SECONDS=$((EXPIRE_HOURS * 3600))
 
 ###
