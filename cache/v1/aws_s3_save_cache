@@ -1,0 +1,135 @@
+#!/bin/bash
+
+###
+# RULE 1: Only node index 0 is allowed to save cache
+###
+if [[ -n "$CIRCLE_NODE_INDEX" && "$CIRCLE_NODE_INDEX" != "0" ]]; then
+  echo "Skipping cache save because CIRCLE_NODE_INDEX=$CIRCLE_NODE_INDEX"
+  echo "Only node index 0 is allowed to save cache to avoid overlap."
+  exit 0
+fi
+
+###
+# RULE 2: AWS credentials
+###
+export AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+export AWS_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+
+###
+# Input arguments
+###
+input_folder=$1
+cache_key=$2
+file_name=$3
+
+###
+# Expire setting (default)
+###
+EXPIRE_HOURS=72
+EXPIRE_SECONDS=$((EXPIRE_HOURS * 3600))
+
+###
+# RULE 3: OVERRIDE_CACHED=1 → force overwrite
+###
+if [[ "$OVERRIDE_CACHED" == "1" ]]; then
+  echo "OVERRIDE_CACHED=1 → Cache overwrite is forced. Skipping age check."
+  FORCE_OVERWRITE=true
+else
+  FORCE_OVERWRITE=false
+fi
+
+###
+# Convert AWS S3 LastModified to epoch (macOS + Linux support)
+###
+to_epoch() {
+  local date_str="$1"
+
+  if [[ "$date_str" == "" ]]; then
+    echo "0"
+    return
+  fi
+
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS BSD date
+    date -j -f "%Y-%m-%dT%H:%M:%S%z" "$date_str" +%s 2>/dev/null || echo "0"
+  else
+    # Linux GNU date
+    date -d "$date_str" +%s 2>/dev/null || echo "0"
+  fi
+}
+
+###
+# Build tar filename
+###
+md5_cache_key=$(echo -n $cache_key | md5sum | awk '{print $1}')
+tar_file="${md5_cache_key}.tgz"
+
+if [ "$file_name" != "" ]; then
+  tar_file="${file_name}.tgz"
+fi
+
+echo "Input folder: $input_folder"
+echo "Cache key: $cache_key"
+echo "tar file: $tar_file"
+
+S3_KEY="cache_folders/$cache_key/$tar_file"
+
+###
+# Local file path
+###
+LOCAL_FILE="/tmp/save-cache/$tar_file"
+mkdir -p /tmp/save-cache
+
+if [ "$S3_TMP_DIR" != "" ]; then
+  mkdir -p "$S3_TMP_DIR/save-cache"
+  LOCAL_FILE="$S3_TMP_DIR/save-cache/$tar_file"
+fi
+
+echo "S3 KEY: $S3_KEY"
+echo "Local file: $LOCAL_FILE"
+
+###
+# Remove local file if exists
+###
+rm -f "$LOCAL_FILE"
+
+###
+# Check S3 object
+###
+echo "Checking existing object on MinIO/S3..."
+
+if aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_KEY" >/tmp/obj.json 2>/dev/null; then
+  last_modified=$(jq -r '.LastModified' /tmp/obj.json)
+  last_modified_epoch=$(to_epoch "$last_modified")
+  now_epoch=$(date +%s)
+  diff_seconds=$((now_epoch - last_modified_epoch))
+
+  echo "Object age: $diff_seconds seconds (expire threshold = $EXPIRE_SECONDS)"
+
+  if [[ "$FORCE_OVERWRITE" == true ]]; then
+    echo "⚠️ OVERRIDE_CACHED=1 → Forcing overwrite regardless of age."
+  elif [ $diff_seconds -lt $EXPIRE_SECONDS ]; then
+    echo "⏩ Object is still fresh (< $EXPIRE_HOURS hours). SKIP upload."
+    exit 0
+  else
+    echo "⚠️ Object expired (> $EXPIRE_HOURS hours). Will overwrite."
+  fi
+else
+  echo "ℹ️ Object does NOT exist. Will create new one."
+fi
+
+###
+# Create tar file
+###
+start_at=$(date)
+echo "Creating tar file at $LOCAL_FILE..."
+tar -zcf "$LOCAL_FILE" -C "$input_folder" .
+echo "done $start_at => $(date)"
+
+###
+# Upload file
+###
+echo "Uploading to s3://$S3_BUCKET/$S3_KEY"
+aws s3 cp "$LOCAL_FILE" "s3://$S3_BUCKET/$S3_KEY"
+
+echo "✅ DONE"
