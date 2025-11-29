@@ -212,6 +212,9 @@ if (!emulatorClient.getToken()?.trim()) {
   process.exit(1);
 }
 
+
+const traceRequestId = argv.traceRequestId || argv["trace-request-id"] || null;
+
 // mapping command
 switch (command) {
   case "listConnected":
@@ -220,7 +223,7 @@ switch (command) {
 
   case "connect":
     const retry = argv.retryTime ? parseInt(argv.retryTime, 10) : 5;
-    emulatorClient.tryConnect(retry, argv.traceRequestId || null);
+    emulatorClient.tryConnect(retry, traceRequestId);
     break;
 
   case "disconnect":
@@ -228,7 +231,7 @@ switch (command) {
     break;
 
   case "disconnectByTraceRequestId":
-    emulatorClient.disconnectByTraceRequestId(argv.traceRequestId);
+    emulatorClient.disconnectByTraceRequestId(traceRequestId);
     break;
 
   case "forwardPorts":
