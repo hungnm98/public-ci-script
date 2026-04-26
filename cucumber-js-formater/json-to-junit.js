@@ -91,7 +91,7 @@ function convertJsonToJUnit(jsonFilePath, outputXmlPath) {
       if (element.steps && Array.isArray(element.steps)) {
         element.steps.forEach((step) => {
           // Skip hidden Before/After hooks
-          if (step.hidden) {
+          if (step.hidden && step.result?.status !== 'failed') {
             return
           }
 
