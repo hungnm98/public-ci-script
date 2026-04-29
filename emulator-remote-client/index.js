@@ -76,10 +76,11 @@ class Index {
       const body = {
         appendix: {
           TEST_EXIT_CODE: process.env.TEST_EXIT_CODE,
-          CIRCLE_BUILD_URL: process.env.CIRCLE_BUILD_URL,
           CIRCLE_SHA1: process.env.CIRCLE_SHA1,
           CIRCLE_BRANCH: process.env.CIRCLE_BRANCH,
-          CIRCLE_PROJECT_REPONAME: process.env.CIRCLE_PROJECT_REPONAME
+          CIRCLE_PROJECT_REPONAME: process.env.CIRCLE_PROJECT_REPONAME,
+          CIRCLE_BUILD_NUM: process.env.CIRCLE_BUILD_NUM,
+          CIRCLE_BUILD_URL: process.env.CIRCLE_BUILD_URL,
         },
         traceRequestId,
         adbState: adbState,
