@@ -74,6 +74,13 @@ class Index {
       const adbState = this.detectDeviceState()
       const deviceName = data.remoteConnectUrl || ""
       const body = {
+        appendix: {
+          TEST_EXIT_CODE: process.env.TEST_EXIT_CODE,
+          CIRCLE_BUILD_URL: process.env.CIRCLE_BUILD_URL,
+          CIRCLE_SHA1: process.env.CIRCLE_SHA1,
+          CIRCLE_BRANCH: process.env.CIRCLE_BRANCH,
+          CIRCLE_PROJECT_REPONAME: process.env.CIRCLE_PROJECT_REPONAME
+        },
         traceRequestId,
         adbState: adbState,
         deviceStatus: adbState[deviceName]
