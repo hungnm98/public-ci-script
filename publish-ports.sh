@@ -6,7 +6,7 @@ set -e
 # CONFIGURATION
 # =====================================================================
 
-NAMESPACE=circleci
+NAMESPACE="${NAMESPACE:-${K8S_NAMESPACE:-circleci}}"
 
 [ -z "$HOSTNAME" ] && HOSTNAME=$(hostname)
 [ -z "$DOMAIN" ] && DOMAIN="remistag.site"
@@ -16,19 +16,40 @@ NAMESPACE=circleci
 [ -z "$WS_PORTS" ] && WS_PORTS=""
 [ -z "$NODE_PORTS" ] && NODE_PORTS=""
 
+POD_HOSTNAME="$HOSTNAME"
+RESOURCE_HOSTNAME="$POD_HOSTNAME"
+
+hash_hostname() {
+  if command -v md5sum >/dev/null 2>&1; then
+    printf '%s' "$1" | md5sum | awk '{print $1}'
+  elif command -v md5 >/dev/null 2>&1; then
+    printf '%s' "$1" | md5
+  else
+    echo "Neither md5sum nor md5 is available" >&2
+    exit 1
+  fi
+}
+
+if [ "${#POD_HOSTNAME}" -ge 50 ]; then
+  RESOURCE_HOSTNAME=$(hash_hostname "$POD_HOSTNAME")
+fi
+
+echo "🏷️  Original pod hostname: $POD_HOSTNAME"
+echo "🔑 Resource hostname: $RESOURCE_HOSTNAME"
+
 # =====================================================================
 # FUNCTIONS
 # =====================================================================
 
 # Thêm label cho pod
 add_pod_label() {
-  echo "🔖 Adding label pod-name=$HOSTNAME to pod $HOSTNAME"
-  kubectl label pod "$HOSTNAME" pod-name="$HOSTNAME" -n $NAMESPACE --overwrite
+  echo "🔖 Adding label pod-name=$POD_HOSTNAME to pod $POD_HOSTNAME"
+  kubectl label pod "$POD_HOSTNAME" pod-name="$POD_HOSTNAME" -n $NAMESPACE --overwrite
 }
 
 # Tạo internal service cho HTTP và WS ports
 create_internal_service() {
-  local service_name="svc-$HOSTNAME"
+  local service_name="svc-$RESOURCE_HOSTNAME"
 
   echo "⚙️  Creating Service $service_name"
   cat <<EOF | kubectl apply -f -
@@ -38,11 +59,11 @@ metadata:
   name: $service_name
   namespace: $NAMESPACE
   labels:
-    app: $HOSTNAME
-    owner: $HOSTNAME
+    app: $POD_HOSTNAME
+    owner: $POD_HOSTNAME
 spec:
   selector:
-    pod-name: $HOSTNAME
+    pod-name: $POD_HOSTNAME
   ports:
 $(for port in $HTTP_PORTS; do cat <<EOP
     - name: http-$port
@@ -61,8 +82,8 @@ EOF
 
 # Tạo HTTP Ingress
 create_http_ingress() {
-  local ingress_name="ing-http-$HOSTNAME"
-  local service_name="svc-$HOSTNAME"
+  local ingress_name="ing-http-$RESOURCE_HOSTNAME"
+  local service_name="svc-$RESOURCE_HOSTNAME"
 
   echo "⚙️  Creating Ingress $ingress_name"
   cat <<EOF | kubectl apply -f -
@@ -72,15 +93,15 @@ metadata:
   name: $ingress_name
   namespace: $NAMESPACE
   labels:
-    app: $HOSTNAME
-    owner: $HOSTNAME
+    app: $POD_HOSTNAME
+    owner: $POD_HOSTNAME
   annotations:
     kubernetes.io/ingress.class: nginx
 spec:
   ingressClassName: nginx
   rules:
 $(for port in $HTTP_PORTS; do cat <<EOP
-    - host: $HOSTNAME-$port.$DOMAIN
+    - host: $POD_HOSTNAME-$port.$DOMAIN
       http:
         paths:
           - path: /
@@ -97,8 +118,8 @@ EOF
 
 # Tạo WebSocket Ingress
 create_ws_ingress() {
-  local ingress_name="ing-ws-$HOSTNAME"
-  local service_name="svc-$HOSTNAME"
+  local ingress_name="ing-ws-$RESOURCE_HOSTNAME"
+  local service_name="svc-$RESOURCE_HOSTNAME"
 
   echo "⚙️  Creating Ingress $ingress_name"
   cat <<EOF | kubectl apply -f -
@@ -108,8 +129,8 @@ metadata:
   name: $ingress_name
   namespace: $NAMESPACE
   labels:
-    app: $HOSTNAME
-    owner: $HOSTNAME
+    app: $POD_HOSTNAME
+    owner: $POD_HOSTNAME
   annotations:
     kubernetes.io/ingress.class: haproxy
     haproxy.org/websocket: "true"
@@ -117,7 +138,7 @@ spec:
   ingressClassName: haproxy
   rules:
 $(for port in $WS_PORTS; do cat <<EOP
-    - host: $HOSTNAME-$port.$WS_DOMAIN
+    - host: $POD_HOSTNAME-$port.$WS_DOMAIN
       http:
         paths:
           - path: /
@@ -134,10 +155,10 @@ EOF
 
 # Tạo NodePort Service
 create_nodeport_service() {
-  local service_name="svc-node-port-$HOSTNAME"
+  local service_name="svc-node-port-$RESOURCE_HOSTNAME"
 
   # Lấy node name và IP
-  local node_name=$(kubectl get pod "$HOSTNAME" -n $NAMESPACE -o jsonpath='{.spec.nodeName}')
+  local node_name=$(kubectl get pod "$POD_HOSTNAME" -n $NAMESPACE -o jsonpath='{.spec.nodeName}')
   local node_ip=$(kubectl get node "$node_name" -o jsonpath='{.status.addresses[?(@.type=="ExternalIP")].address}')
 
   # Fallback nếu node không có external IP
@@ -153,13 +174,13 @@ metadata:
   name: $service_name
   namespace: $NAMESPACE
   labels:
-    app: $HOSTNAME
-    owner: $HOSTNAME
+    app: $POD_HOSTNAME
+    owner: $POD_HOSTNAME
 spec:
   type: NodePort
   externalTrafficPolicy: Local
   selector:
-    pod-name: $HOSTNAME
+    pod-name: $POD_HOSTNAME
   ports:
 $(for port in $NODE_PORTS; do cat <<EOP
     - name: nodeport-$port
@@ -181,11 +202,11 @@ EOF
 # In ra các URLs đã tạo
 print_urls() {
   for port in $HTTP_PORTS; do
-    echo "🌍 HTTP: http://$HOSTNAME-$port.$DOMAIN"
+    echo "🌍 HTTP: http://$POD_HOSTNAME-$port.$DOMAIN"
   done
 
   for port in $WS_PORTS; do
-    echo "🔌 WS: ws://$HOSTNAME-$port.$WS_DOMAIN"
+    echo "🔌 WS: ws://$POD_HOSTNAME-$port.$WS_DOMAIN"
   done
 }
 
