@@ -157,13 +157,21 @@ EOF
 create_nodeport_service() {
   local service_name="svc-node-port-$RESOURCE_HOSTNAME"
 
-  # Lấy node name và IP
+  # Lấy node name và IP, ưu tiên label public_ip
   local node_name=$(kubectl get pod "$POD_HOSTNAME" -n $NAMESPACE -o jsonpath='{.spec.nodeName}')
-  local node_ip=$(kubectl get node "$node_name" -o jsonpath='{.status.addresses[?(@.type=="ExternalIP")].address}')
+  local node_ip=$(kubectl get node "$node_name" -o jsonpath='{.metadata.labels.public_ip}')
 
-  # Fallback nếu node không có external IP
+  if [ -z "$node_ip" ]; then
+    node_ip=$(kubectl get node "$node_name" -o jsonpath='{.status.addresses[?(@.type=="ExternalIP")].address}')
+  fi
+
   if [ -z "$node_ip" ]; then
     node_ip=$(kubectl get node "$node_name" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+  fi
+
+  if [ -z "$node_ip" ]; then
+    echo "Node $node_name does not have a public_ip label, ExternalIP, or InternalIP" >&2
+    exit 1
   fi
 
   echo "⚙️  Creating NodePort Service $service_name"
