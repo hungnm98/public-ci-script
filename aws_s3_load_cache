@@ -32,18 +32,27 @@ fi
 
 echo "s3 file: $S3_FOLDER"
 echo "local file: $LOCAL_FILE"
-if aws s3 ls "${S3_FOLDER}" > /dev/null 2>&1; then
+if head_error=$(aws s3api head-object --bucket "$S3_BUCKET" --key "cache_folders/$cache_key/$tar_file" 2>&1 >/dev/null); then
   echo "File exists. Proceeding with sync..."
-  rm $LOCAL_FILE
-  aws s3 cp s3://$S3_FOLDER $LOCAL_FILE
-  mkdir -p $input_folder
+  rm -f "$LOCAL_FILE"
+  aws s3 cp "s3://$S3_FOLDER" "$LOCAL_FILE" || exit $?
+  mkdir -p "$input_folder" || exit $?
   #unzip -o $LOCAL_FILE -d $input_folder
   start_at=$(date)
-  tar xf $LOCAL_FILE -C $input_folder
+  tar xf "$LOCAL_FILE" -C "$input_folder" || exit $?
   echo "done $start_at => $(date)"
   echo "output : $input_folder"
 else
-  echo "File not found"
+  head_status=$?
+  case "$head_error" in
+    *"An error occurred (404) when calling the HeadObject operation:"*)
+      echo "File not found: s3://$S3_FOLDER"
+      ;;
+    *)
+      printf '%s\n' "$head_error" >&2
+      echo "Failed to check cache: s3://$S3_FOLDER (exit $head_status)" >&2
+      exit "$head_status"
+      ;;
+  esac
 fi
-
 

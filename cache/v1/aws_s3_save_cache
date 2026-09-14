@@ -99,8 +99,8 @@ rm -f "$LOCAL_FILE"
 ###
 echo "Checking existing object on MinIO/S3..."
 
-if aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_KEY" >/tmp/obj.json 2>/dev/null; then
-  last_modified=$(jq -r '.LastModified' /tmp/obj.json)
+if head_result=$(aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_KEY" 2>&1); then
+  last_modified=$(printf '%s\n' "$head_result" | jq -r '.LastModified')
   last_modified_epoch=$(to_epoch "$last_modified")
   now_epoch=$(date +%s)
   diff_seconds=$((now_epoch - last_modified_epoch))
@@ -116,7 +116,17 @@ if aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_KEY" >/tmp/obj.json 2>
     echo "⚠️ Object expired (> $EXPIRE_HOURS hours). Will overwrite."
   fi
 else
-  echo "ℹ️ Object does NOT exist. Will create new one."
+  head_status=$?
+  case "$head_result" in
+    *"An error occurred (404) when calling the HeadObject operation:"*)
+      echo "ℹ️ Object does NOT exist. Will create new one."
+      ;;
+    *)
+      printf '%s\n' "$head_result" >&2
+      echo "Failed to check cache: s3://$S3_BUCKET/$S3_KEY (exit $head_status)" >&2
+      exit "$head_status"
+      ;;
+  esac
 fi
 
 ###
@@ -124,13 +134,13 @@ fi
 ###
 start_at=$(date)
 echo "Creating tar file at $LOCAL_FILE..."
-tar -zcf "$LOCAL_FILE" -C "$input_folder" .
+tar -zcf "$LOCAL_FILE" -C "$input_folder" . || exit $?
 echo "done $start_at => $(date)"
 
 ###
 # Upload file
 ###
 echo "Uploading to s3://$S3_BUCKET/$S3_KEY"
-aws s3 cp "$LOCAL_FILE" "s3://$S3_BUCKET/$S3_KEY"
+aws s3 cp "$LOCAL_FILE" "s3://$S3_BUCKET/$S3_KEY" || exit $?
 
 echo "✅ DONE"
