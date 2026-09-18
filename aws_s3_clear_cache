@@ -1,0 +1,32 @@
+#!/bin/bash
+set -e
+
+# Export AWS credentials
+export AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID}"
+export AWS_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY}"
+
+cache_key=${1:-}
+if [ -z "$cache_key" ]; then
+  echo "No cache key provided. Skipping cache clear."
+  exit 0
+fi
+
+if [ -z "$S3_BUCKET" ]; then
+  echo "S3_BUCKET is required" >&2
+  exit 1
+fi
+
+S3_PREFIX="cache_folders/$cache_key/"
+echo "Cache key: $cache_key"
+
+object_count=$(aws s3api list-objects-v2 --bucket "$S3_BUCKET" \
+  --prefix "$S3_PREFIX" --max-keys 1 --no-paginate \
+  --query 'KeyCount' --output text)
+
+if [ "$object_count" = "0" ]; then
+  echo "Cache not found: $cache_key"
+  exit 0
+fi
+
+aws s3 rm "s3://$S3_BUCKET/$S3_PREFIX" --recursive
+echo "Cache cleared: $cache_key"
