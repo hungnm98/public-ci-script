@@ -28,15 +28,27 @@ if sys.argv[1:3] == ["s3api", "head-object"]:
     else:
         print(json.dumps({"LastModified": os.environ["LAST_MODIFIED"]}))
     sys.exit(status)
+def stored(uri):
+    return os.path.join(os.environ["S3_STORE"], uri.replace("/", "%"))
 if sys.argv[1:3] == ["s3", "cp"]:
     status = int(os.environ.get("COPY_STATUS", "0"))
     if status:
         print("S3 transfer failed", file=sys.stderr)
-    elif sys.argv[3].startswith("s3://"):
-        shutil.copyfile(os.environ["ARCHIVE"], sys.argv[4])
+    elif sys.argv[3] == "-":
+        with open(stored(sys.argv[4]), "wb") as upload:
+            shutil.copyfileobj(sys.stdin.buffer, upload)
+    elif sys.argv[4] == "-":
+        with open(os.environ["ARCHIVE"], "rb") as archive:
+            shutil.copyfileobj(archive, sys.stdout.buffer)
     else:
-        shutil.copyfile(sys.argv[3], os.environ["UPLOADED_ARCHIVE"])
+        shutil.copyfile(os.environ["ARCHIVE"], sys.argv[4])
     sys.exit(status)
+if sys.argv[1:3] == ["s3", "mv"]:
+    os.rename(stored(sys.argv[3]), stored(sys.argv[4]))
+    sys.exit(0)
+if sys.argv[1:3] == ["s3", "rm"]:
+    os.remove(stored(sys.argv[3]))
+    sys.exit(0)
 print("Unexpected AWS operation", file=sys.stderr)
 sys.exit(99)
 '''
@@ -60,6 +72,8 @@ class CacheTests(unittest.TestCase):
             entry.size = len(content)
             archive.addfile(entry, io.BytesIO(content))
         self.calls_file = self.work / "calls.jsonl"
+        self.store = self.work / "s3"
+        self.store.mkdir()
         self.env = {
             **os.environ,
             "PATH": f"{self.work}:{os.environ['PATH']}",
@@ -72,7 +86,7 @@ class CacheTests(unittest.TestCase):
             "SAVE_CACHE_EXPIRE_HOURS": "72",
             "AWS_CALLS": str(self.calls_file),
             "ARCHIVE": str(self.archive),
-            "UPLOADED_ARCHIVE": str(self.work / "uploaded.tgz"),
+            "S3_STORE": str(self.store),
             "HEAD_STATUS": "0",
             "HEAD_ERROR": "",
             "LAST_MODIFIED": datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -80,8 +94,13 @@ class CacheTests(unittest.TestCase):
             ),
         }
 
+    def stored_objects(self):
+        return sorted(path.name.replace("%", "/") for path in self.store.iterdir())
+
     def run_script(self, script, **env):
         self.calls_file.write_text("")
+        for path in self.store.iterdir():
+            path.unlink()
         result = subprocess.run(
             ["sh" if script.startswith("cache/") else "bash", str(ROOT / script),
              str(self.folder), CACHE_KEY, "test-cache"],
@@ -124,8 +143,14 @@ class CacheTests(unittest.TestCase):
                     self.assertIn("File not found", result.stdout)
                     self.assertEqual(len(calls), 1)
                 else:
-                    self.assertEqual(calls[1][1:], ["cp", str(self.work / "save-cache" / TAR_FILE), S3_URI])
-                    with tarfile.open(self.work / "uploaded.tgz") as archive:
+                    temp_uri = calls[1][3]
+                    self.assertEqual(calls[1][:3], ["s3", "cp", "-"])
+                    self.assertTrue(temp_uri.startswith(
+                        f"s3://test-bucket/cache_folders/{CACHE_KEY}/.{TAR_FILE}.uploading-"))
+                    self.assertEqual(calls[2], ["s3", "mv", temp_uri, S3_URI])
+                    self.assertEqual(self.stored_objects(), [S3_URI])
+                    self.assertFalse((self.work / "save-cache").exists())
+                    with tarfile.open(self.store / S3_URI.replace("/", "%")) as archive:
                         self.assertEqual(archive.extractfile("./deploy.env").read(), b"DEPLOY_VERSION=123\n")
 
     def test_existing_object_restores_or_skips_save(self):
@@ -134,7 +159,8 @@ class CacheTests(unittest.TestCase):
                 result, calls = self.run_script(script)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if script == SCRIPTS[0]:
-                    self.assertEqual(calls[1], ["s3", "cp", S3_URI, str(self.work / "load-cache" / TAR_FILE)])
+                    self.assertEqual(calls[1], ["s3", "cp", S3_URI, "-"])
+                    self.assertFalse((self.work / "load-cache").exists())
                     self.assertEqual((self.folder / "restored.env").read_text(), "DEPLOY_VERSION=456\n")
                 else:
                     self.assertEqual(len(calls), 1)
@@ -144,7 +170,8 @@ class CacheTests(unittest.TestCase):
             with self.subTest(env=env):
                 result, calls = self.run_script(SCRIPTS[2], **env)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(len(calls), 2)
+                self.assertEqual([call[:2] for call in calls[1:]], [["s3", "cp"], ["s3", "mv"]])
+                self.assertEqual(self.stored_objects(), [S3_URI])
                 self.assertIn("DONE", result.stdout)
 
     def test_transfer_errors_do_not_report_success(self):
@@ -161,6 +188,7 @@ class CacheTests(unittest.TestCase):
                 if script == SCRIPTS[0]:
                     self.assertNotIn("done ", result.stdout)
                 self.assertEqual(len(calls), 2)
+                self.assertEqual(self.stored_objects(), [])
 
     def test_invalid_archive_does_not_report_success(self):
         self.archive.write_text("invalid archive")
@@ -177,7 +205,8 @@ class CacheTests(unittest.TestCase):
                     HEAD_ERROR="An error occurred (404) when calling the HeadObject operation: Not Found",
                 )
                 self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(len(calls), 1)
+                self.assertNotIn(["s3", "mv"], [call[:2] for call in calls])
+                self.assertEqual(self.stored_objects(), [])
                 self.assertNotIn("DONE", result.stdout)
 
 

@@ -22,19 +22,10 @@ echo "tar file: $tar_file"
 
 
 S3_FOLDER="$S3_BUCKET/cache_folders/$cache_key/$tar_file"
-LOCAL_FILE="/tmp/save-cache/$tar_file"
-mkdir -p /tmp/save-cache
-echo "S3_TMP_DIR: $S3_TMP_DIR"
-if [ "$S3_TMP_DIR" != "" ]; then
-  mkdir -p $S3_TMP_DIR/save-cache
-  LOCAL_FILE="$S3_TMP_DIR/save-cache/$tar_file"
-fi
+# Upload to a temporary key first so a failed tar never becomes the cache
+S3_TMP_FOLDER="$S3_BUCKET/cache_folders/$cache_key/.$tar_file.uploading-$$-$(date +%s)"
 
 echo "s3 file: $S3_FOLDER"
-echo "local file: $LOCAL_FILE"
-
-rm -f "$LOCAL_FILE"
-# cd $input_folder && zip -r $LOCAL_FILE * && cd -
 
 if head_error=$(aws s3api head-object --bucket "$S3_BUCKET" --key "cache_folders/$cache_key/$tar_file" 2>&1 >/dev/null); then
   echo "File exists!"
@@ -51,8 +42,17 @@ else
       ;;
   esac
   start_at=$(date)
-  tar -zcf "$LOCAL_FILE" -C "$input_folder" . || exit $?
+  echo "stream to s3"
+  # Stream the archive straight to S3 instead of writing it to disk and reading it back
+  tar -zcf - -C "$input_folder" . | aws s3 cp - "s3://$S3_TMP_FOLDER"
+  pipe_status=("${PIPESTATUS[@]}")
+  if [ "${pipe_status[1]}" -ne 0 ]; then
+    exit "${pipe_status[1]}"
+  fi
+  if [ "${pipe_status[0]}" -ne 0 ]; then
+    aws s3 rm "s3://$S3_TMP_FOLDER"
+    exit "${pipe_status[0]}"
+  fi
+  aws s3 mv "s3://$S3_TMP_FOLDER" "s3://$S3_FOLDER" || exit $?
   echo "done $start_at => $(date)"
-  echo "put to s3"
-  aws s3 cp "$LOCAL_FILE" "s3://$S3_FOLDER"
 fi
