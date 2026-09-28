@@ -133,6 +133,14 @@ class CacheTests(unittest.TestCase):
                     self.assertNotIn("DONE", result.stdout)
                     self.assertEqual(len(calls), 1)
 
+    def test_logs_script_version(self):
+        version = (ROOT / "version.txt").read_text().strip()
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                result, _ = self.run_script(script)
+                expected = "unknown" if script.startswith("cache/") else version
+                self.assertIn(f"Script version: {expected} (md5 ", result.stdout.splitlines()[0])
+
     def test_missing_object_is_a_normal_cache_miss(self):
         for script in SCRIPTS:
             with self.subTest(script=script):
