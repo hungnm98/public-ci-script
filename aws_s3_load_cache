@@ -28,13 +28,16 @@ if head_error=$(aws s3api head-object --bucket "$S3_BUCKET" --key "cache_folders
   mkdir -p "$input_folder" || exit $?
   start_at=$(date)
   # Stream the archive straight into tar instead of writing it to disk and reading it back
-  aws s3 cp "s3://$S3_FOLDER" - | tar -xzf - -C "$input_folder"
-  pipe_status=("${PIPESTATUS[@]}")
-  if [ "${pipe_status[0]}" -ne 0 ]; then
-    exit "${pipe_status[0]}"
+  download_status_file=$(mktemp) || exit $?
+  { aws s3 cp "s3://$S3_FOLDER" -; echo $? > "$download_status_file"; } | tar -xzf - -C "$input_folder"
+  tar_status=$?
+  download_status=$(cat "$download_status_file")
+  rm -f "$download_status_file"
+  if [ "$download_status" -ne 0 ]; then
+    exit "$download_status"
   fi
-  if [ "${pipe_status[1]}" -ne 0 ]; then
-    exit "${pipe_status[1]}"
+  if [ "$tar_status" -ne 0 ]; then
+    exit "$tar_status"
   fi
   echo "done $start_at => $(date)"
   echo "output : $input_folder"
