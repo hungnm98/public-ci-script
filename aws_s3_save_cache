@@ -44,14 +44,17 @@ else
   start_at=$(date)
   echo "stream to s3"
   # Stream the archive straight to S3 instead of writing it to disk and reading it back
-  tar -zcf - -C "$input_folder" . | aws s3 cp - "s3://$S3_TMP_FOLDER"
-  pipe_status=("${PIPESTATUS[@]}")
-  if [ "${pipe_status[1]}" -ne 0 ]; then
-    exit "${pipe_status[1]}"
+  tar_status_file=$(mktemp) || exit $?
+  { tar -zcf - -C "$input_folder" .; echo $? > "$tar_status_file"; } | aws s3 cp - "s3://$S3_TMP_FOLDER"
+  upload_status=$?
+  tar_status=$(cat "$tar_status_file")
+  rm -f "$tar_status_file"
+  if [ "$upload_status" -ne 0 ]; then
+    exit "$upload_status"
   fi
-  if [ "${pipe_status[0]}" -ne 0 ]; then
+  if [ "$tar_status" -ne 0 ]; then
     aws s3 rm "s3://$S3_TMP_FOLDER"
-    exit "${pipe_status[0]}"
+    exit "$tar_status"
   fi
   aws s3 mv "s3://$S3_TMP_FOLDER" "s3://$S3_FOLDER" || exit $?
   echo "done $start_at => $(date)"

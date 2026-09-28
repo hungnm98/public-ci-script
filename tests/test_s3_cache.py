@@ -55,6 +55,8 @@ sys.exit(99)
 
 
 class CacheTests(unittest.TestCase):
+    shell = None
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -102,7 +104,7 @@ class CacheTests(unittest.TestCase):
         for path in self.store.iterdir():
             path.unlink()
         result = subprocess.run(
-            ["sh" if script.startswith("cache/") else "bash", str(ROOT / script),
+            [self.shell or ("sh" if script.startswith("cache/") else "bash"), str(ROOT / script),
              str(self.folder), CACHE_KEY, "test-cache"],
             env={**self.env, **env}, capture_output=True, text=True,
         )
@@ -208,6 +210,11 @@ class CacheTests(unittest.TestCase):
                 self.assertNotIn(["s3", "mv"], [call[:2] for call in calls])
                 self.assertEqual(self.stored_objects(), [])
                 self.assertNotIn("DONE", result.stdout)
+
+
+# CI may invoke the scripts with `sh`, which is dash on Debian/Ubuntu
+class DashCacheTests(CacheTests):
+    shell = "dash"
 
 
 if __name__ == "__main__":
