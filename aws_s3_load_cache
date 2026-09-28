@@ -21,25 +21,21 @@ echo "Cache key: $cache_key"
 echo "tar file: $tar_file"
 
 S3_FOLDER="$S3_BUCKET/cache_folders/$cache_key/$tar_file"
-LOCAL_FILE="/tmp/load-cache/$tar_file"
-mkdir -p /tmp/load-cache
-echo "S3_TMP_DIR: $S3_TMP_DIR"
-if [ "$S3_TMP_DIR" != "" ]; then
-  mkdir -p $S3_TMP_DIR/load-cache
-  LOCAL_FILE="$S3_TMP_DIR/load-cache/$tar_file"
-fi
-
 
 echo "s3 file: $S3_FOLDER"
-echo "local file: $LOCAL_FILE"
 if head_error=$(aws s3api head-object --bucket "$S3_BUCKET" --key "cache_folders/$cache_key/$tar_file" 2>&1 >/dev/null); then
   echo "File exists. Proceeding with sync..."
-  rm -f "$LOCAL_FILE"
-  aws s3 cp "s3://$S3_FOLDER" "$LOCAL_FILE" || exit $?
   mkdir -p "$input_folder" || exit $?
-  #unzip -o $LOCAL_FILE -d $input_folder
   start_at=$(date)
-  tar xf "$LOCAL_FILE" -C "$input_folder" || exit $?
+  # Stream the archive straight into tar instead of writing it to disk and reading it back
+  aws s3 cp "s3://$S3_FOLDER" - | tar -xzf - -C "$input_folder"
+  pipe_status=("${PIPESTATUS[@]}")
+  if [ "${pipe_status[0]}" -ne 0 ]; then
+    exit "${pipe_status[0]}"
+  fi
+  if [ "${pipe_status[1]}" -ne 0 ]; then
+    exit "${pipe_status[1]}"
+  fi
   echo "done $start_at => $(date)"
   echo "output : $input_folder"
 else
